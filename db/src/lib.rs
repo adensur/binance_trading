@@ -110,7 +110,7 @@ impl Db {
         let client = reqwest::Client::new();
         let api_key = env::var("BINANCE_API_KEY").chain_err(|| ErrorKind::ApiKeyNotFoundError)?;
         let res = client
-            .get(query.clone())
+            .get(&query)
             .header("X-MBX-APIKEY", api_key)
             .send()
             .await?;
