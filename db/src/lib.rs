@@ -56,16 +56,14 @@ struct HistoricalTrade {
 
 pub struct Db {
     data: Vec<HistoricalTrade>,
-    min_trade_id: i64,
-    min_time_milliseconds: i64,
 }
 
 impl Db {
     pub fn get_min_trade_id(&self) -> i64 {
-        self.data[0].trade_id
+        self.data.last().unwrap().trade_id
     }
     pub fn get_min_time_milliseconds(&self) -> i64 {
-        self.data[0].time_milliseconds
+        self.data.last().unwrap().time_milliseconds
     }
     pub fn get_data_len(&self) -> usize {
         self.data.len()
@@ -77,16 +75,12 @@ impl Db {
         if deserialized.len() == 0 {
             return Err(ErrorKind::EmptyDbError.into());
         }
-        deserialized.sort_by(|a, b| a.trade_id.cmp(&b.trade_id));
-        Ok(Db {
-            min_trade_id: deserialized[0].trade_id,
-            min_time_milliseconds: deserialized[0].time_milliseconds,
-            data: deserialized,
-        })
+        deserialized.sort_by(|a, b| b.trade_id.cmp(&a.trade_id));
+        Ok(Db { data: deserialized })
     }
     pub async fn load_more_data(&mut self) -> Result<()> {
         let limit = 1000;
-        let from_id = self.min_trade_id - limit;
+        let from_id = self.get_min_trade_id() - limit;
         let query = format!("https://api.binance.com/api/v3/historicalTrades?symbol=ETHBTC&limit={limit}&fromId={from_id}");
         let client = reqwest::Client::new();
         let api_key = env::var("BINANCE_API_KEY").chain_err(|| ErrorKind::ApiKeyNotFoundError)?;
@@ -99,18 +93,15 @@ impl Db {
         if new_data.len() == 0 {
             return Err(ErrorKind::EmptyDbError.into());
         }
-        if new_data[0].trade_id >= self.min_trade_id {
+        if new_data[0].trade_id >= self.get_min_trade_id() {
             return Err(ErrorKind::IntersectingTradeSlicesError(
-                self.min_trade_id,
+                self.get_min_trade_id(),
                 new_data[0].trade_id,
             )
             .into());
         }
-        new_data.sort_by(|a, b| a.trade_id.cmp(&b.trade_id));
-        new_data.extend(self.data.drain(..));
-        self.data = new_data;
-        self.min_trade_id = self.data[0].trade_id;
-        self.min_time_milliseconds = self.data[0].time_milliseconds;
+        new_data.sort_by(|a, b| b.trade_id.cmp(&a.trade_id));
+        self.data.extend(new_data.drain(..));
         Ok(())
     }
     pub fn save<P: AsRef<Path>>(&self, filename: &P) -> Result<()> {

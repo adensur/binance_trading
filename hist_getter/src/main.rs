@@ -1,9 +1,8 @@
 use chrono::NaiveDateTime;
+use db;
 use error_chain::error_chain;
 use std::path::PathBuf;
 use structopt::StructOpt;
-
-mod db;
 
 error_chain! {
     links {
@@ -30,7 +29,7 @@ async fn run() -> Result<()> {
         NaiveDateTime::from_timestamp(db.get_min_time_milliseconds() / 1000, 0)
     );
 
-    for _ in 0..opt.count {
+    for i in 0..opt.count {
         db.load_more_data().await?;
         println!(
             "Id: {}, records count {}, min_ts: {}",
@@ -38,6 +37,9 @@ async fn run() -> Result<()> {
             db.get_data_len(),
             NaiveDateTime::from_timestamp(db.get_min_time_milliseconds() / 1000, 0)
         );
+        if i % 100 == 0 {
+            println!("Processing {} out out {}", i, opt.count);
+        }
     }
 
     db.save(&opt.input)?;
