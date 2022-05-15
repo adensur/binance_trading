@@ -37,7 +37,7 @@ error_chain! {
     },
 */
 #[derive(Serialize, Deserialize)]
-struct HistoricalTrade {
+pub struct HistoricalTrade {
     #[serde(rename = "id")]
     trade_id: i64,
     #[serde(rename = "price")]
@@ -54,13 +54,25 @@ struct HistoricalTrade {
     is_best_match: bool,
 }
 
+impl HistoricalTrade {
+    pub fn get_price(&self) -> f64 {
+        self.price.parse().unwrap()
+    }
+}
+
 pub struct Db {
-    data: Vec<HistoricalTrade>,
+    data: Vec<HistoricalTrade>, // from most recent to least recent
 }
 
 impl Db {
+    pub fn get_data(&self, idx: usize) -> &HistoricalTrade {
+        &self.data[self.data.len() - idx - 1] // inverse, because data is stored recent-to-latest
+    }
     pub fn get_min_trade_id(&self) -> i64 {
         self.data.last().unwrap().trade_id
+    }
+    pub fn get_max_trade_id(&self) -> i64 {
+        self.data[0].trade_id
     }
     pub fn get_min_time_milliseconds(&self) -> i64 {
         self.data.last().unwrap().time_milliseconds
