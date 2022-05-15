@@ -1,9 +1,16 @@
-use error_chain::error_chain;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::BufReader;
 
+use error_chain::error_chain;
 error_chain! {
+    errors {
+        EmptyDbError
+        /*EmptyDbError() {
+            description("Input file json is empty")
+            display("Input file json is empty")
+        }*/
+    }
     foreign_links {
         Io(std::io::Error);
         HttpRequest(reqwest::Error);
@@ -49,6 +56,9 @@ impl Db {
         let file = File::open(filename)?;
         let reader = BufReader::new(file);
         let mut deserialized: Vec<HistoricalTrade> = serde_json::from_reader(reader)?;
+        if deserialized.len() == 0 {
+            return Err(ErrorKind::EmptyDbError.into());
+        }
         deserialized.sort_by(|a, b| a.trade_id.cmp(&b.trade_id));
         Ok(Db { data: deserialized })
     }
