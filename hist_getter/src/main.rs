@@ -1,6 +1,8 @@
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, BufWriter};
 
 use error_chain::error_chain;
 error_chain! {
@@ -10,11 +12,16 @@ error_chain! {
             description("Input file json is empty")
             display("Input file json is empty")
         }*/
+        IntersectingTradeSlicesError(old_id: i64, new_id: i64) {
+            description("Loaded trade data intersects with old trade data")
+            display("Loaded trade data intersects with old trade data; old_id: '{}', new_id: '{}'", old_id, new_id)
+        }
     }
     foreign_links {
         Io(std::io::Error);
         HttpRequest(reqwest::Error);
         JsonDecodeError(serde_json::Error);
+        MissingApiKeyInEnv(std::env::VarError);
     }
 }
 
@@ -40,7 +47,7 @@ struct HistoricalTrade {
     #[serde(rename = "quoteQty")]
     quote_quantity: String,
     #[serde(rename = "time")]
-    time: i64,
+    time_milliseconds: i64,
     #[serde(rename = "isBuyerMaker")]
     is_buyer_maker: bool,
     #[serde(rename = "isBestMatch")]
@@ -49,6 +56,8 @@ struct HistoricalTrade {
 
 struct Db {
     data: Vec<HistoricalTrade>,
+    min_trade_id: i64,
+    min_time_milliseconds: i64,
 }
 
 impl Db {
@@ -60,21 +69,67 @@ impl Db {
             return Err(ErrorKind::EmptyDbError.into());
         }
         deserialized.sort_by(|a, b| a.trade_id.cmp(&b.trade_id));
-        Ok(Db { data: deserialized })
+        Ok(Db {
+            min_trade_id: deserialized[0].trade_id,
+            min_time_milliseconds: deserialized[0].time_milliseconds,
+            data: deserialized,
+        })
+    }
+    async fn load_more_data(&mut self) -> Result<()> {
+        let limit = 1000;
+        let from_id = self.min_trade_id - limit;
+        let query = format!("https://api.binance.com/api/v3/historicalTrades?symbol=ETHBTC&limit={limit}&fromId={from_id}");
+        let client = reqwest::Client::new();
+        let api_key = env::var("BINANCE_API_KEY")?;
+        let res = client
+            .get(query)
+            .header("X-MBX-APIKEY", api_key)
+            .send()
+            .await?;
+        let mut new_data = res.json::<Vec<HistoricalTrade>>().await?;
+        if new_data.len() == 0 {
+            return Err(ErrorKind::EmptyDbError.into());
+        }
+        if new_data[0].trade_id >= self.min_trade_id {
+            return Err(ErrorKind::IntersectingTradeSlicesError(
+                self.min_trade_id,
+                new_data[0].trade_id,
+            )
+            .into());
+        }
+        new_data.sort_by(|a, b| a.trade_id.cmp(&b.trade_id));
+        new_data.extend(self.data.drain(..));
+        self.data = new_data;
+        self.min_trade_id = self.data[0].trade_id;
+        self.min_time_milliseconds = self.data[0].time_milliseconds;
+        Ok(())
+    }
+    fn save(&self, filename: &str) -> Result<()> {
+        let file = File::create(filename)?;
+        serde_json::to_writer(BufWriter::new(file), &self.data)?;
+        Ok(())
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let res = reqwest::get("http://httpbin.org/get").await?;
-    println!("Status: {}", res.status());
-    println!("Headers:\n{:#?}", res.headers());
+    let mut db = Db::new("historical_trades.json")?;
+    println!(
+        "Id: {}, records count {}, min_ts: {}",
+        db.min_trade_id,
+        db.data.len(),
+        NaiveDateTime::from_timestamp(db.min_time_milliseconds / 1000, 0)
+    );
 
-    let body = res.text().await?;
-    println!("Body:\n{}", body);
+    db.load_more_data().await?;
+    println!(
+        "Id: {}, records count {}, min_ts: {}",
+        db.min_trade_id,
+        db.data.len(),
+        NaiveDateTime::from_timestamp(db.min_time_milliseconds / 1000, 0)
+    );
 
-    let db = Db::new("historical_trades.json")?;
-    println!("Id: {:?}", db.data[0].trade_id);
+    db.save("historical_trades.json")?;
 
     Ok(())
 }
