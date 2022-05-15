@@ -1,5 +1,8 @@
 use db;
 use rand::Rng;
+use std::path::Path;
+use std::path::PathBuf;
+use structopt::StructOpt;
 
 enum TradeAction {
     // Pass, // just use Buy(0)
@@ -7,12 +10,8 @@ enum TradeAction {
                                      // Sell { base_quantity: f64 }, // just use Buy(-qty)
 }
 
-//const FEE: f64 = 0.001;
-//const FEE: f64 = 0.0001;
-const FEE: f64 = 0.00001;
-
 trait Strategy {
-    fn new(base_balance: f64, quote_balance: f64) -> Box<dyn Strategy>
+    fn new(base_balance: f64, quote_balance: f64, fee: f64) -> Box<dyn Strategy>
     where
         Self: Sized;
     fn react_to_data(
@@ -29,7 +28,7 @@ struct DummyStrategy {
 }
 
 impl Strategy for DummyStrategy {
-    fn new(base_balance: f64, quote_balance: f64) -> Box<dyn Strategy> {
+    fn new(base_balance: f64, quote_balance: f64, _fee: f64) -> Box<dyn Strategy> {
         let strategy = DummyStrategy {
             _base_balance: base_balance,
             _quote_balance: quote_balance,
@@ -51,13 +50,15 @@ struct RandomStrategy {
     quote_balance: f64,
     last_buying_price: Option<f64>,
     already_sold: bool,
+    fee: f64,
 }
 
 impl Strategy for RandomStrategy {
-    fn new(base_balance: f64, quote_balance: f64) -> Box<dyn Strategy> {
+    fn new(base_balance: f64, quote_balance: f64, fee: f64) -> Box<dyn Strategy> {
         let strategy = RandomStrategy {
             base_balance: base_balance,
             quote_balance: quote_balance,
+            fee: fee,
             last_buying_price: None,
             already_sold: false,
         };
@@ -79,15 +80,17 @@ impl Strategy for RandomStrategy {
         */
         match self.last_buying_price {
             None => {
-                self.last_buying_price = Some(new_data.get_price() * (1.0 + FEE));
+                self.last_buying_price = Some(new_data.get_price() * (1.0 + self.fee));
                 TradeAction::BuyQuote { base_quantity: 1.0 }
             }
             Some(last_buying_price) => {
                 let new_price = new_data.get_price();
-                if new_price * (1.0 + FEE) < last_buying_price * (1.0 - FEE) {
+                if new_price * (1.0 + self.fee) < last_buying_price * (1.0 - self.fee) {
                     self.already_sold = true;
                     return TradeAction::BuyQuote {
-                        base_quantity: -self.quote_balance / new_price * 0.999999 * (1.0 - FEE),
+                        base_quantity: -self.quote_balance / new_price
+                            * 0.999999
+                            * (1.0 - self.fee),
                     };
                 }
                 TradeAction::BuyQuote { base_quantity: 0.0 }
@@ -101,11 +104,11 @@ struct Executor {
 }
 
 impl Executor {
-    fn new(filename: &str) -> Executor {
+    fn new<F: AsRef<Path>>(filename: F) -> Executor {
         let db = db::Db::new(&filename).unwrap();
         Executor { db: db }
     }
-    fn simulate_strategy<T: Strategy>(&self, verbose: bool) -> (f64, f64) {
+    fn simulate_strategy<T: Strategy>(&self, fee: f64, verbose: bool) -> (f64, f64) {
         let base_name = "ETH";
         let quote_name = "BTC";
         let mut rng = rand::thread_rng();
@@ -113,7 +116,7 @@ impl Executor {
         let finish_id: usize = rng.gen_range(start_id..self.db.get_data_len());
         let mut base_balance: f64 = 1.0;
         let mut quote_balance: f64 = 0.0;
-        let mut strategy = T::new(base_balance, quote_balance);
+        let mut strategy = T::new(base_balance, quote_balance, fee);
         if verbose {
             println!("Generated id: {}-{}", start_id, finish_id);
         }
@@ -127,10 +130,10 @@ impl Executor {
                     let quote_diff: f64;
                     if base_quantity >= 0.0 {
                         // quote diff is positive - we get less then we paid for
-                        quote_diff = base_quantity * last_price * (1.0 - FEE);
+                        quote_diff = base_quantity * last_price * (1.0 - fee);
                     } else {
                         // quote diff is negative - we pay out more than we get back
-                        quote_diff = base_quantity * last_price * (1.0 + FEE);
+                        quote_diff = base_quantity * last_price * (1.0 + fee);
                     }
                     quote_balance += quote_diff;
                     if verbose {
@@ -156,13 +159,26 @@ impl Executor {
     }
 }
 
+#[derive(Debug, StructOpt)]
+#[structopt(name = "example", about = "An example of StructOpt usage.")]
+struct Opt {
+    #[structopt(short = "i", long = "input", parse(from_os_str))]
+    input: PathBuf,
+    #[structopt(short = "c", long = "count")]
+    count: i64,
+    #[structopt(short = "f", long = "fee", default_value = "0.001")]
+    fee: f64,
+}
+
 fn main() {
-    let executor = Executor::new("../hist_getter/historical_trades.json");
+    let opt = Opt::from_args();
+    let executor = Executor::new(&opt.input);
     println!("Db data len: {}", executor.db.get_data_len());
     let mut success_count = 0;
     let mut total_count = 0;
-    for _ in 0..10000 {
-        let (base_balance, _quote_balance) = executor.simulate_strategy::<RandomStrategy>(false);
+    for _ in 0..opt.count {
+        let (base_balance, _quote_balance) =
+            executor.simulate_strategy::<RandomStrategy>(opt.fee, false);
         total_count += 1;
         if base_balance > 1.0 {
             success_count += 1;

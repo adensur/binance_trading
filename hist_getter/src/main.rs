@@ -17,6 +17,8 @@ struct Opt {
     input: PathBuf,
     #[structopt(short = "c", long = "count")]
     count: i64,
+    #[structopt(short = "s", long = "symbol", default_value = "ETHBTC")]
+    symbol: String,
 }
 
 async fn run() -> Result<()> {
@@ -30,7 +32,7 @@ async fn run() -> Result<()> {
     );
 
     for i in 0..opt.count {
-        db.load_more_data().await?;
+        db.load_more_data(&opt.symbol).await?;
         println!(
             "Id: {}, records count {}, min_ts: {}",
             db.get_min_trade_id(),

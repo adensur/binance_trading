@@ -288,6 +288,7 @@ version = "0.1.0"
 dependencies = [
  "db",
  "rand",
+ "structopt",
 ]
 
 [[package]]
@@ -299,6 +300,15 @@ dependencies = [
  "error-chain",
  "structopt",
  "tokio",
+]
+
+[[package]]
+name = "hist_inverter"
+version = "0.1.0"
+dependencies = [
+ "db",
+ "error-chain",
+ "structopt",
 ]
 
 [[package]]

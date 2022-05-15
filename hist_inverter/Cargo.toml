@@ -1,5 +1,5 @@
 [package]
-name = "hist_executor"
+name = "hist_inverter"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,5 +7,5 @@ edition = "2021"
 
 [dependencies]
 db = { path = "../db" }
-rand = { version = "0.8.5" }
 structopt = { version = "0.3", default-features = false }
+error-chain = { version = "0.12.4"}
