@@ -8,10 +8,10 @@ use error_chain::error_chain;
 error_chain! {
     errors {
         EmptyDbError
-        /*EmptyDbError() {
-            description("Input file json is empty")
-            display("Input file json is empty")
-        }*/
+        ApiKeyNotFoundError {
+            description("No api key found in env variable. Please set it to BINANCE_API_KEY")
+            display("No api key found in env variable. Please set it to BINANCE_API_KEY")
+        }
         IntersectingTradeSlicesError(old_id: i64, new_id: i64) {
             description("Loaded trade data intersects with old trade data")
             display("Loaded trade data intersects with old trade data; old_id: '{}', new_id: '{}'", old_id, new_id)
@@ -80,7 +80,7 @@ impl Db {
         let from_id = self.min_trade_id - limit;
         let query = format!("https://api.binance.com/api/v3/historicalTrades?symbol=ETHBTC&limit={limit}&fromId={from_id}");
         let client = reqwest::Client::new();
-        let api_key = env::var("BINANCE_API_KEY")?;
+        let api_key = env::var("BINANCE_API_KEY").chain_err(|| ErrorKind::ApiKeyNotFoundError)?;
         let res = client
             .get(query)
             .header("X-MBX-APIKEY", api_key)
@@ -111,8 +111,7 @@ impl Db {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+async fn run() -> Result<()> {
     let mut db = Db::new("historical_trades.json")?;
     println!(
         "Id: {}, records count {}, min_ts: {}",
@@ -132,4 +131,23 @@ async fn main() -> Result<()> {
     db.save("historical_trades.json")?;
 
     Ok(())
+}
+
+#[tokio::main]
+async fn main() {
+    if let Err(ref e) = run().await {
+        println!("error: {}", e);
+
+        for e in e.iter().skip(1) {
+            println!("caused by: {}", e);
+        }
+
+        // The backtrace is not always generated. Try to run this example
+        // with `RUST_BACKTRACE=1`.
+        if let Some(backtrace) = e.backtrace() {
+            println!("backtrace: {:?}", backtrace);
+        }
+
+        ::std::process::exit(1);
+    }
 }
